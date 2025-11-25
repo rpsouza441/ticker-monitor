@@ -1,0 +1,143 @@
+services:
+  # ═══════════════════════════════════════════════════════════
+  # PostgreSQL - Banco de Dados
+  # ═══════════════════════════════════════════════════════════
+  postgres:
+    image: postgres:15-alpine
+    container_name: ticker-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_INITDB_ARGS: ${POSTGRES_INITDB_ARGS}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    # - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - ticker-network
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ═══════════════════════════════════════════════════════════
+  # RabbitMQ - Message Queue
+  # ═══════════════════════════════════════════════════════════
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: ticker-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_DEFAULT_VHOST}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    ports:
+      - "5672:5672" # AMQP
+      - "15672:15672" # Management UI
+    networks:
+      - ticker-network
+    healthcheck:
+      test: [ "CMD", "rabbitmq-diagnostics", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ═══════════════════════════════════════════════════════════
+  # Ticker Monitor - Aplicação Principal
+  # ═══════════════════════════════════════════════════════════
+  ticker-monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ticker-monitor-app
+
+    # Variáveis de Ambiente
+    environment:
+      # Python
+      PYTHONUNBUFFERED: ${PYTHONUNBUFFERED}
+      PYTHONDONTWRITEBYTECODE: ${PYTHONDONTWRITEBYTECODE}
+      PYTHONPATH: ${PYTHONPATH}
+
+      # Execução
+      EXECUTION_TIME: ${EXECUTION_TIME}
+      TICKERS_PER_REQUEST: ${TICKERS_PER_REQUEST}
+      REQUEST_DELAY_MS: ${REQUEST_DELAY_MS}
+      MONITORED_TICKERS: ${MONITORED_TICKERS}
+
+      # Database
+      DATABASE_URL: ${DATABASE_URL}
+      DB_ECHO: ${DB_ECHO}
+
+      # RabbitMQ
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      RABBITMQ_QUEUE: ${RABBITMQ_QUEUE}
+      RABBITMQ_MAX_RETRIES: ${RABBITMQ_MAX_RETRIES}
+
+      # Rate Limiting
+      BACKOFF_BASE: ${BACKOFF_BASE}
+      BACKOFF_MAX_SECONDS: ${BACKOFF_MAX_SECONDS}
+
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL}
+      LOG_FORMAT: ${LOG_FORMAT}
+
+      # Timezone
+      TIMEZONE: ${TIMEZONE}
+      TZ: ${TIMEZONE}
+
+    # Volumes
+    volumes:
+      - ./src:/app/src:ro # Código (read-only)
+      - ./migrations:/app/migrations:ro # Migrations (read-only)
+      - ./logs:/app/logs # Logs (read-write)
+      - ./.env:/app/.env:ro # Config (read-only)
+
+    # Portas (opcional, para debug)
+    # ports:
+    #   - "8000:8000"  # Se implementar API
+
+    # Dependências
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+    # Network
+    networks:
+      - ticker-network
+
+    # Restart policy
+    restart: unless-stopped
+
+    # Limites de recursos
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+# ═══════════════════════════════════════════════════════════
+# Volumes - Persistência de Dados
+# ═══════════════════════════════════════════════════════════
+volumes:
+  postgres_data:
+    driver: local
+  rabbitmq_data:
+    driver: local
+
+# ═══════════════════════════════════════════════════════════
+# Networks - Comunicação entre Serviços
+# ═══════════════════════════════════════════════════════════
+networks:
+  ticker-network:
+    driver: bridge
