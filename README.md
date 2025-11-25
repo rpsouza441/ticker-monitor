@@ -1,78 +1,171 @@
-# Ticker Monitor - Sistema de Monitoramento de Ações com yfinance
+# Ticker Monitor
 
-Sistema de produção para monitorar tickers de forma contínua usando **yfinance + PostgreSQL + RabbitMQ**.
+Sistema para monitoramento automatico de tickers da bolsa brasileira (B3).
 
-## 🎯 Características
+## Arquitetura
 
-- ✅ **Monitoramento contínuo** de múltiplos tickers via RabbitMQ
-- ✅ **Requisições em batch** (configurável, padrão 10 tickers)
-- ✅ **Retry com backoff exponencial** (máx 10 tentativas)
-- ✅ **Rate limit tracking** em tabela separada
-- ✅ **Histórico completo** (OHLCV até 10 anos)
-- ✅ **Dados fundamentalistas** (P/E, EPS, dividend yield, market cap)
-- ✅ **Suporte multi-ativo**: Ações, FIIs, BDRs, ETFs, Criptomoedas
-- ✅ **Logging estruturado** (JSON)
-- ✅ **Arquitetura de serviços** (Domain, Services, Infrastructure)
-- ✅ **Health checks** automáticos
-- ✅ **Docker Compose** pronto para produção
+- **PostgreSQL**: Banco de dados relacional para armazenamento persistente
+- **RabbitMQ**: Fila de mensagens para processamento assincrono
+- **Python App**: Consumer que processa jobs e coleta dados via yfinance
 
----
+## Funcionalidades
 
-## 🚀 Quick Start
+- Agendamento diario de coleta de dados
+- Processamento em batch com retry exponencial
+- Sistema anti-duplicacao de jobs
+- Rate limiting com tracking
+- Persistencia com Alembic migrations
+- Timezone-aware (America/Sao_Paulo)
 
-### 1. Clonar e Configurar
+## Estrutura do Projeto
 
+```
+ticker-monitor/
+├── src/
+│   ├── domain/           # Modelos de dados e entities
+│   ├── infrastructure/   # Database, queue, migrations
+│   ├── services/         # Business logic
+│   └── scheduler/        # Job consumer
+├── migrations/           # Alembic migrations
+├── queries/             # SQL queries utilitarias
+├── docker-compose.yml   # Orquestracao de containers
+└── .env                 # Variaveis de ambiente
+```
+
+## Requisitos
+
+- Docker
+- Docker Compose
+- Git
+
+## Configuracao
+
+1. Clone o repositorio:
 ```bash
-git clone <seu-repo> ticker-monitor
+git clone <repository-url>
 cd ticker-monitor
-
-# Copiar arquivo de ambiente
-cp .env.example .env
-
-# Editar tickers (opcional)
-nano .env
-# MONITORED_TICKERS=PETR4.SA,VALE3.SA,WEGE3.SA,...
 ```
 
-### 2. Subir Stack
-
+2. Configure as variaveis de ambiente:
 ```bash
-docker-compose up -d
-
-# Verificar status
-docker-compose ps
-docker-compose logs -f ticker-monitor
+cp .env.example .env
+# Edite .env com suas configuracoes
 ```
 
-### 3. Monitorar
+3. Inicie os containers:
+```bash
+docker compose up -d
+```
 
-**RabbitMQ Management** (ver fila de jobs):
-- http://localhost:15672
-- Usuário: guest / Senha: guest
+## Variaveis de Ambiente
 
-**PostgreSQL** (ver dados):
+### PostgreSQL
+- `POSTGRES_USER`: Usuario do banco
+- `POSTGRES_PASSWORD`: Senha do banco
+- `POSTGRES_DB`: Nome do banco
+
+### RabbitMQ
+- `RABBITMQ_DEFAULT_USER`: Usuario do RabbitMQ
+- `RABBITMQ_DEFAULT_PASS`: Senha do RabbitMQ
+
+### Aplicacao
+- `EXECUTION_TIME`: Horario de execucao diaria (formato: HH:MM)
+- `TICKERS`: Lista de tickers separados por virgula
+- `TIMEZONE`: Fuso horario (default: America/Sao_Paulo)
+- `TICKERS_PER_REQUEST`: Tickers por batch (default: 10)
+- `REQUEST_DELAY_MS`: Delay entre batches em ms (default: 300)
+
+## Uso
+
+### Verificar status dos containers
+```bash
+docker compose ps
+```
+
+### Ver logs
+```bash
+docker logs ticker-monitor-app -f
+```
+
+### Enfileirar job manualmente
+```bash
+docker exec ticker-monitor-app python -c "from src.main import init_system; init_system()"
+```
+
+### Acessar banco de dados
 ```bash
 docker exec -it ticker-postgres psql -U ticker_user -d ticker_db
-
-# Queries úteis:
-SELECT * FROM latest_ticker_prices;
-SELECT * FROM rate_limit_statistics;
-SELECT * FROM rate_limit_events WHERE status = 'ACTIVE';
 ```
 
----
-
-## 📋 Configuração
-
-### Variáveis de Ambiente (.env)
-
+### Limpar fila
 ```bash
-# EXECUÇÃO
-EXECUTION_TIME=16:30                 # Horário de atualização diária
-TICKERS_PER_REQUEST=10               # Máximo de tickers por requisição
-REQUEST_DELAY_MS=300                 # Delay entre requisições (ms)
+docker exec ticker-rabbitmq rabbitmqctl purge_queue ticker_updates
+```
 
-# TICKERS
+## Monitoramento
+
+### RabbitMQ Management
+- URL: http://localhost:15672
+- User: admin
+- Pass: admin123
+
+### Consultar rate limit events
+```sql
+SELECT status, COUNT(*) as total 
+FROM rate_limit_events 
+WHERE created_at >= NOW() - INTERVAL '24 hours'
+GROUP BY status;
+```
+
+## Desenvolvimento
+
+### Executar migrations
+```bash
+docker exec ticker-monitor-app alembic upgrade head
+```
+
+### Criar nova migration
+```bash
+docker exec ticker-monitor-app alembic revision --autogenerate -m "description"
+```
+
+### Rebuild containers
+```bash
+docker compose down
+docker compose build --no-cache
+docker compose up -d
+```
+
+## Troubleshooting
+
+### Container nao inicia
+```bash
+docker compose logs ticker-monitor-app
+```
+
+### Limpar dados e reiniciar
+```bash
+docker compose down -v
+docker compose up -d
+```
+
+### Rate limit do yfinance
+O sistema implementa retry exponencial (5 tentativas) e aguarda automaticamente.
+Para evitar bloqueios:
+- Ajuste `TICKERS_PER_REQUEST` (recomendado: 10)
+- Ajuste `REQUEST_DELAY_MS` (recomendado: 300ms)
+
+## Proximos Passos
+
+- Dashboard de metricas
+- API REST para consulta de dados
+- Alertas via email/telegram
+- Suporte a mais exchanges
+
+## Licenca
+
+MIT
+ICKERS
 MONITORED_TICKERS=PETR4.SA,VALE3.SA,...  # Separados por vírgula
 
 # DATABASE
